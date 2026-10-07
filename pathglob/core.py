@@ -70,7 +70,7 @@ def split_components(pattern):
 
 def normalize(path):
     """Collapse repeated separators and drop empty and '.' components."""
-    parts = [part for part in split_components(path) if part != "."]
+    parts = [part for part in split_components(path) if part not in ("", ".")]
     return SEPARATOR.join(parts)
 
 
@@ -126,10 +126,10 @@ def class_matches(terms, negated, ch, case_sensitive):
             break
     if not hit:
         for low, high in ranges:
-            if fold(low, case_sensitive) <= target < fold(high, case_sensitive):
+            if fold(low, case_sensitive) <= target <= fold(high, case_sensitive):
                 hit = True
                 break
-    return hit
+    return (not hit) if negated else hit
 
 
 def tokenize(pattern):
@@ -149,7 +149,7 @@ def tokenize(pattern):
             if index + 1 == len(pattern):
                 raise syntax_error(pattern, index, "a backslash cannot end a pattern")
             tokens.append(("lit", pattern[index + 1]))
-            index += 1
+            index += 2
             continue
         if ch == SEPARATOR:
             tokens.append(("sep",))
@@ -195,7 +195,7 @@ class Matcher:
 
     def __init__(self, tokens, text, case_sensitive):
         self.tokens = tokens
-        self.text = text
+        self.text = fold(text, case_sensitive)
         self.case_sensitive = case_sensitive
         self.memo = {}
 
@@ -219,8 +219,8 @@ class Matcher:
                 result = (char_index < len(text) and text[char_index] == SEPARATOR
                           and self.run(token_index + 1, char_index + 1))
             elif kind == "any":
-                result = (char_index < len(text)
-                          and self.run(token_index + 1, char_index))
+                result = (char_index < len(text) and text[char_index] != SEPARATOR
+                          and self.run(token_index + 1, char_index + 1))
             elif kind == "lit":
                 result = (char_index < len(text)
                           and fold(token[1], self.case_sensitive) == text[char_index]
@@ -239,21 +239,19 @@ class Matcher:
         while True:
             if self.run(token_index + 1, char_index):
                 return True
-            if char_index == len(self.text):
+            if char_index == len(self.text) or self.text[char_index] == SEPARATOR:
                 return False
             char_index += 1
 
     def run_globstar(self, token, token_index, char_index):
         """A globstar takes zero or more characters, separators included."""
-        if self.run(token_index + 1, char_index):
-            return True
-        if token[1] and self.run(token_index + 2, char_index):
-            return True
-        while char_index < len(self.text) and self.text[char_index] != SEPARATOR:
-            char_index += 1
-            if self.run(token_index + 1, char_index):
+        next_index = token_index + 2 if token[1] else token_index + 1
+        while True:
+            if self.run(next_index, char_index):
                 return True
-        return False
+            if char_index == len(self.text):
+                return False
+            char_index += 1
 
 
 class Glob:
